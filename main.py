@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 # 1. CONFIGURACIÓN DEL EQUIPO Y PARÁMETROS
 # ==============================================================================
 RUT_POR_DEFECTO = "24.365.895-K"  # Reemplazar por el RUT del integrante elegido
-INTEGRANTES = ["Mauricio Valdés", "Compañero 2", "Compañero 3"]
+INTEGRANTES = ["Mauricio Valdés", "Joaquín Navarrete", "Compañero 3"]
 C_MAX = 10.0
 
 
@@ -36,12 +36,8 @@ class ResultadoCombinacion:
 
 # --- RAMA: feature/caso-a (IMPLEMENTADO POR JOAQUÍN) ---
 def termino_caso_a(i: int, p: float) -> float:
-    """
-    Caso A (WiFi estándar): i * (1 - p)^(i - 1) * p
-    TODO (Compañero): Reemplazar el raise por el retorno de la fórmula.
-    """
-    raise NotImplementedError("Pendiente: implementar Caso A en rama feature/caso-a")
-
+    """Caso A (WiFi estándar): i * (1 - p)^(i - 1) * p"""
+    return float(i) * ((1.0 - p) ** (i - 1)) * p
 
 # --- RAMA: feature/casos-bc (IMPLEMENTADO POR MAURICIO) ---
 def termino_caso_b(i: int, p: float) -> float:
