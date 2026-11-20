@@ -34,7 +34,7 @@ class ResultadoCombinacion:
 # 2. DEFINICIÓN MODULAR DE CASOS (TRABAJO POR RAMAS)
 # ==============================================================================
 
-# --- RAMA: feature/caso-a (TAREA DE TU COMPAÑERO) ---
+# --- RAMA: feature/caso-a (IMPLEMENTADO POR JOAQUÍN) ---
 def termino_caso_a(i: int, p: float) -> float:
     """
     Caso A (WiFi estándar): i * (1 - p)^(i - 1) * p
