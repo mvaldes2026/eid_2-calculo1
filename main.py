@@ -6,7 +6,7 @@ from typing import Callable
 import matplotlib
 import matplotlib.pyplot as plt
 
-# Modo consola por defecto (ideal para la evaluación); usa --gui para abrir el simulador visual
+# Modo consola por defecto (ideal para evaluación); usa --gui para abrir el simulador visual
 USAR_CLI_FORZADO = "--gui" not in sys.argv
 if USAR_CLI_FORZADO or (os.name != "nt" and not os.environ.get("DISPLAY")):
     matplotlib.use("Agg")
@@ -15,8 +15,9 @@ if USAR_CLI_FORZADO or (os.name != "nt" and not os.environ.get("DISPLAY")):
 # ==============================================================================
 # 1. CONFIGURACIÓN DEL EQUIPO Y PARÁMETROS
 # ==============================================================================
-RUT_POR_DEFECTO = "22.549.846-6"
 INTEGRANTES = ["Mauricio Valdés", "Joaquín Navarrete"]
+RUT_POR_DEFECTO = "22.549.846-6"
+PROPIETARIO_RUT = "Mauricio Valdés"
 C_MAX = 10.0
 
 
@@ -40,16 +41,13 @@ class ResultadoCombinacion:
 
 
 # ==============================================================================
-# 2. DEFINICIÓN MODULAR DE CASOS (TRABAJO POR RAMAS)
+# 2. DEFINICIÓN DE MODELOS ARQ (CASOS A, B Y C)
 # ==============================================================================
-
-# --- RAMA: feature/caso-a (IMPLEMENTADO POR JOAQUÍN) ---
 def termino_caso_a(i: int, p: float) -> float:
     """Caso A (WiFi estándar): i * (1 - p)^(i - 1) * p"""
     return float(i) * ((1.0 - p) ** (i - 1)) * p
 
 
-# --- RAMA: feature/casos-bc (IMPLEMENTADO POR MAURICIO) ---
 def termino_caso_b(i: int, p: float) -> float:
     """Caso B (Fibra con reintentos decrecientes): (1 / i) * (1 - p)^(i - 1) * p"""
     return (1.0 / i) * ((1.0 - p) ** (i - 1)) * p
@@ -57,7 +55,7 @@ def termino_caso_b(i: int, p: float) -> float:
 
 def termino_caso_c(i: int, p: float) -> float:
     """Caso C (Red móvil con copia extra): (i + 1) * (1 - p)^(i - 1) * p"""
-    return (i + 1) * ((1.0 - p) ** (i - 1)) * p
+    return float(i + 1) * ((1.0 - p) ** (i - 1)) * p
 
 
 MODELOS_ARQ: dict[str, ModeloCaso] = {
@@ -111,14 +109,6 @@ def calcular_probabilidades(digitos: list[int]) -> dict[str, float]:
     return probs
 
 
-def caso_esta_implementado(caso: str) -> bool:
-    try:
-        MODELOS_ARQ[caso].funcion_termino(1, 0.5)
-        return True
-    except NotImplementedError:
-        return False
-
-
 def calcular_sumas_parciales(caso: str, p: float, k_max: int) -> list[float]:
     fn = MODELOS_ARQ[caso].funcion_termino
     sumas: list[float] = []
@@ -134,13 +124,15 @@ def evaluar_convergencia(
 ) -> tuple[bool, float, int]:
     fn = MODELOS_ARQ[caso].funcion_termino
     acumulado = 0.0
-    min_pasos = int(2.0 / p) + 10
+    # Se espera superar el máximo local de los términos (alrededor de i ≈ 1/p)
+    min_pasos = max(10, int(3.0 / p) + 10)
 
     for i in range(1, max_iter + 1):
         termino = fn(i, p)
-        acumulado += termino
-        if i >= min_pasos and abs(termino) < tol:
-            return True, acumulado, i
+        acumulado_nuevo = acumulado + termino
+        if i >= min_pasos and abs(acumulado_nuevo - acumulado) < tol:
+            return True, acumulado_nuevo, i
+        acumulado = acumulado_nuevo
     return False, acumulado, max_iter
 
 
@@ -155,18 +147,21 @@ def generar_texto_recomendacion(resultados: list[ResultadoCombinacion], c_max: f
     mejor = min(viables, key=lambda r: (r.limite_empirico, r.iteraciones_conv))
     texto = (
         f"Se recomienda Caso {mejor.caso} ({MODELOS_ARQ[mejor.caso].nombre}) con "
-        f"{mejor.nombre_p} = {mejor.p:.2f}: la serie converge monotónicamente a un límite "
-        f"empírico de {mejor.limite_empirico:.6f} <= {c_max:.1f} transmisiones esperadas, "
-        f"estabilizándose (error < 1e-12) en k = {mejor.iteraciones_conv} iteraciones y "
-        f"minimizando el costo esperado."
+        f"{mejor.nombre_p} = {mejor.p:.2f}: al ser una serie de términos positivos con decaimiento "
+        f"geométrico (1 - p)^(i - 1), la sucesión de sumas parciales S_k converge monotónicamente "
+        f"al límite empírico {mejor.limite_empirico:.6f} <= {c_max:.1f} transmisiones esperadas, "
+        f"estabilizándose (variación < 1e-12) en k = {mejor.iteraciones_conv} iteraciones. "
+        f"Esta combinación minimiza el costo esperado total y ofrece el mayor margen de seguridad "
+        f"bajo el umbral operativo."
     )
 
     viables_a = [r for r in viables if r.caso == "A"]
     if viables_a and mejor.caso != "A":
         mejor_a = min(viables_a, key=lambda r: (r.limite_empirico, r.iteraciones_conv))
         texto += (
-            f"\nAlternativa WiFi (Caso A): Con {mejor_a.nombre_p} = {mejor_a.p:.2f} "
-            f"converge a {mejor_a.limite_empirico:.6f} (k = {mejor_a.iteraciones_conv})."
+            f"\nAlternativa en WiFi estándar (Caso A): Con {mejor_a.nombre_p} = {mejor_a.p:.2f} "
+            f"también cumple el umbral, convergiendo a {mejor_a.limite_empirico:.6f} "
+            f"(estabilización en k = {mejor_a.iteraciones_conv})."
         )
     return texto
 
@@ -174,12 +169,12 @@ def generar_texto_recomendacion(resultados: list[ResultadoCombinacion], c_max: f
 def ejecutar_analisis(rut_raw: str, c_max: float = C_MAX) -> dict:
     rut_limpio, digitos = extraer_digitos_rut(rut_raw)
     probs = calcular_probabilidades(digitos)
-    casos_disponibles = [c for c in sorted(MODELOS_ARQ.keys()) if caso_esta_implementado(c)]
+    casos_ordenados = sorted(MODELOS_ARQ.keys())
 
     tablas_s10: dict[str, dict[str, list[float]]] = {}
     resultados: list[ResultadoCombinacion] = []
 
-    for caso in casos_disponibles:
+    for caso in casos_ordenados:
         tablas_s10[caso] = {
             nombre_p: calcular_sumas_parciales(caso, p_val, 10)
             for nombre_p, p_val in probs.items()
@@ -204,7 +199,7 @@ def ejecutar_analisis(rut_raw: str, c_max: float = C_MAX) -> dict:
         "digitos": digitos,
         "probabilidades": probs,
         "c_max": c_max,
-        "casos_disponibles": casos_disponibles,
+        "casos_disponibles": casos_ordenados,
         "tablas_s10": tablas_s10,
         "resultados": resultados,
         "recomendacion": generar_texto_recomendacion(resultados, c_max),
@@ -221,20 +216,19 @@ def imprimir_reporte(datos: dict) -> None:
     col_p2 = f"p2={probs['p2']:.2f}"
     col_p3 = f"p3={probs['p3']:.2f}"
 
-    print("=" * 82)
+    print("=" * 94)
     print("EID N°2 - MATE1133: ANÁLISIS DE CONVERGENCIA PROTOCOLO ARQ")
-    print("=" * 82)
+    print("=" * 94)
     print(f"Integrantes : {', '.join(INTEGRANTES)}")
-    print(f"RUT elegido : {datos['rut_ingresado']} -> Dígitos = {datos['digitos']}")
+    print(
+        f"RUT elegido : {datos['rut_ingresado']} (perteneciente a {PROPIETARIO_RUT}) "
+        f"-> Dígitos = {datos['digitos']}"
+    )
     print(f"Parámetros  : p1 = {probs['p1']:.4f} | p2 = {probs['p2']:.4f} | p3 = {probs['p3']:.4f}")
-    print("=" * 82)
+    print("=" * 94)
 
-    for caso in sorted(MODELOS_ARQ.keys()):
+    for caso in datos["casos_disponibles"]:
         modelo = MODELOS_ARQ[caso]
-        if caso not in datos["casos_disponibles"]:
-            print(f"\n--- CASO {caso}: {modelo.nombre} [PENDIENTE DE IMPLEMENTACIÓN] ---")
-            continue
-
         print(f"\n--- CASO {caso}: {modelo.nombre} ({modelo.formula_texto}) ---")
         print(f"{'k':>4} | {col_p1:>14} | {col_p2:>14} | {col_p3:>14}")
         print("-" * 55)
@@ -245,31 +239,45 @@ def imprimir_reporte(datos: dict) -> None:
                 f"{series_p['p2'][idx]:>14.6f} | {series_p['p3'][idx]:>14.6f}"
             )
 
-    print("\n" + "=" * 82)
+    print("\n" + "=" * 94)
     print(f"CONVERGENCIA Y TABLA DE VIABILIDAD (UMBRAL C_max = {c_max:.1f})")
-    print("=" * 82)
+    print("=" * 94)
     print(
         f"{'Caso':<6} | {'Probabilidad':<13} | {'¿Converge?':<11} | "
-        f"{'Límite Empírico':>16} | {'Viabilidad':<12}"
+        f"{'Límite Empírico':>16} | {'k Estab.':>8} | {'Viabilidad':<12}"
     )
-    print("-" * 82)
+    print("-" * 94)
     for r in datos["resultados"]:
         estado_conv = "Sí" if r.converge else "No"
         estado_viab = "CUMPLE" if r.cumple_umbral else "NO CUMPLE"
         print(
             f"{r.caso:<6} | {r.nombre_p} ({r.p:.2f})     | {estado_conv:<11} | "
-            f"{r.limite_empirico:>16.6f} | {estado_viab:<12}"
+            f"{r.limite_empirico:>16.6f} | {r.iteraciones_conv:>8} | {estado_viab:<12}"
         )
 
-    print("-" * 82)
+    print("-" * 94)
     print("RECOMENDACIÓN:")
     print(datos["recomendacion"])
-    print("=" * 82)
+    print("=" * 94)
 
 
 # ==============================================================================
 # 5. GENERACIÓN DE GRÁFICOS MATPLOTLIB (INDIVIDUALES + COMPARATIVOS)
 # ==============================================================================
+def _calcular_k_visual(caso: str, res_caso: list[ResultadoCombinacion]) -> int:
+    """Determina un horizonte k donde las 3 curvas muestran claramente su estabilización."""
+    k_necesario = 20
+    for r in res_caso:
+        sumas = calcular_sumas_parciales(caso, r.p, 150)
+        for idx, val in enumerate(sumas, start=1):
+            if abs(r.limite_empirico - val) < 1e-3:
+                k_necesario = max(k_necesario, idx + 5)
+                break
+        else:
+            k_necesario = max(k_necesario, 100)
+    return min(max(k_necesario, 20), 120)
+
+
 def crear_figura_caso(caso: str, datos: dict, k_override: int | None = None) -> plt.Figure:
     modelo = MODELOS_ARQ[caso]
     res_caso = [r for r in datos["resultados"] if r.caso == caso]
@@ -278,7 +286,7 @@ def crear_figura_caso(caso: str, datos: dict, k_override: int | None = None) -> 
     if k_override is not None:
         k_max_plot = max(10, int(k_override))
     else:
-        k_max_plot = min(max(max(r.iteraciones_conv for r in res_caso) // 2, 25), 90)
+        k_max_plot = _calcular_k_visual(caso, res_caso)
     eje_k = list(range(1, k_max_plot + 1))
 
     fig, ax = plt.subplots(figsize=(7.6, 4.3), dpi=110)
@@ -385,10 +393,14 @@ def crear_figura_comparativa_prob(datos: dict, nombre_p: str, k_max_plot: int) -
 
 def guardar_graficos_png(datos: dict) -> dict[str, plt.Figure]:
     figuras: dict[str, plt.Figure] = {}
+    archivos_guardados: list[str] = []
     for caso in datos["casos_disponibles"]:
+        nombre_archivo = f"grafico_caso_{caso}.png"
         fig = crear_figura_caso(caso, datos)
-        fig.savefig(f"grafico_caso_{caso}.png", dpi=150)
+        fig.savefig(nombre_archivo, dpi=150)
         figuras[caso] = fig
+        archivos_guardados.append(nombre_archivo)
+    print(f"Gráficos generados automáticamente: {', '.join(archivos_guardados)}")
     return figuras
 
 
@@ -435,9 +447,7 @@ def lanzar_interfaz_grafica(datos_iniciales: dict, figuras_iniciales: dict[str, 
             plt.close(f)
         figuras_activas.clear()
 
-    # --------------------------------------------------------------------------
-    # 1. BARRA SUPERIOR TIPO APP DE PRESENTACIÓN
-    # --------------------------------------------------------------------------
+    # 1. Barra superior
     header = tk.Frame(root, bg="#0f172a", padx=18, pady=12)
     header.pack(fill=tk.X)
 
@@ -454,7 +464,7 @@ def lanzar_interfaz_grafica(datos_iniciales: dict, figuras_iniciales: dict[str, 
 
     tk.Label(
         header_izq,
-        text="Cálculo Básico (MATE1133) • Evaluación Integral de Desempeño N°2 • Series e Iteraciones",
+        text="Cálculo Básico (MATE1133) • Evaluación Integrada de Desempeño N°2 • Series e Iteraciones",
         font=("Segoe UI", 10),
         fg="#94a3b8",
         bg="#0f172a",
@@ -465,7 +475,7 @@ def lanzar_interfaz_grafica(datos_iniciales: dict, figuras_iniciales: dict[str, 
 
     tk.Label(
         header_der,
-        text="EQUIPO DE TRABAJO",
+        text=f"EQUIPO DE TRABAJO (RUT de {PROPIETARIO_RUT})",
         font=("Segoe UI", 8, "bold"),
         fg="#38bdf8",
         bg="#1e293b",
@@ -479,9 +489,7 @@ def lanzar_interfaz_grafica(datos_iniciales: dict, figuras_iniciales: dict[str, 
         bg="#1e293b",
     ).pack(anchor=tk.E)
 
-    # --------------------------------------------------------------------------
-    # 2. BARRA DE CONTROLES INTERACTIVOS (RUT, UMBRAL C_max, HORIZONTE k)
-    # --------------------------------------------------------------------------
+    # 2. Barra de controles interactivos
     panel_ctrl = tk.Frame(root, bg="#ffffff", padx=16, pady=10, highlightbackground="#cbd5e1", highlightthickness=1)
     panel_ctrl.pack(fill=tk.X, padx=14, pady=(12, 8))
 
@@ -532,9 +540,7 @@ def lanzar_interfaz_grafica(datos_iniciales: dict, figuras_iniciales: dict[str, 
 
     estado_var = tk.StringVar(master=root, value="Listo • PNGs exportados")
 
-    # --------------------------------------------------------------------------
-    # 3. TARJETAS KPI SUPERIORES (CON master=root EXPLÍCITO)
-    # --------------------------------------------------------------------------
+    # 3. Tarjetas KPI superiores
     kpi_container = tk.Frame(root, bg="#f1f5f9")
     kpi_container.pack(fill=tk.X, padx=14, pady=(0, 8))
     for col_idx in range(4):
@@ -590,9 +596,7 @@ def lanzar_interfaz_grafica(datos_iniciales: dict, figuras_iniciales: dict[str, 
             kpi4_val.set("No viable en Caso A")
             kpi4_sub.set("Excede C_max")
 
-    # --------------------------------------------------------------------------
-    # 4. NOTEBOOK CENTRAL CON VISTAS DE PROYECCIÓN
-    # --------------------------------------------------------------------------
+    # 4. Notebook central
     notebook = ttk.Notebook(root)
     notebook.pack(fill=tk.BOTH, expand=True, padx=14, pady=(0, 12))
 
@@ -610,9 +614,7 @@ def lanzar_interfaz_grafica(datos_iniciales: dict, figuras_iniciales: dict[str, 
         for tab_id in notebook.tabs():
             notebook.forget(tab_id)
 
-        # ======================================================================
-        # PESTAÑA 1: TABLERO EJECUTIVO (VIABILIDAD + GRÁFICO BARRAS + RECOMENDACIÓN)
-        # ======================================================================
+        # Pestaña 1: Resumen Ejecutivo
         tab1 = ttk.Frame(notebook, padding=10)
         notebook.add(tab1, text="  1. Resumen Ejecutivo y Viabilidad  ")
 
@@ -699,9 +701,7 @@ def lanzar_interfaz_grafica(datos_iniciales: dict, figuras_iniciales: dict[str, 
         canvas_b.draw()
         canvas_b.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # ======================================================================
-        # PESTAÑAS 2, 3 Y 4: DETALLE POR CADA CASO (TABLA S_1..S_10 + GRÁFICO)
-        # ======================================================================
+        # Pestañas 2, 3 y 4: Detalle por caso
         probs = datos["probabilidades"]
         for idx_tab, caso in enumerate(datos["casos_disponibles"], start=2):
             modelo = MODELOS_ARQ[caso]
@@ -775,9 +775,7 @@ def lanzar_interfaz_grafica(datos_iniciales: dict, figuras_iniciales: dict[str, 
             toolbar.update()
             canvas_c.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # ======================================================================
-        # PESTAÑA 5: COMPARADOR INTERACTIVO ENTRE ARQUITECTURAS (A vs B vs C)
-        # ======================================================================
+        # Pestaña 5: Comparador A vs B vs C
         tab_comp = ttk.Frame(notebook, padding=10)
         notebook.add(tab_comp, text="  5. Comparador A vs B vs C  ")
 
@@ -836,7 +834,7 @@ def lanzar_interfaz_grafica(datos_iniciales: dict, figuras_iniciales: dict[str, 
             figs_png = guardar_graficos_png(nuevos_datos)
             for f in figs_png.values():
                 plt.close(f)
-            print("\n" + "=" * 82)
+            print("\n" + "=" * 94)
             print("RECÁLCULO EN VIVO DESDE LA APLICACIÓN")
             imprimir_reporte(nuevos_datos)
             renderizar_todo(nuevos_datos)
